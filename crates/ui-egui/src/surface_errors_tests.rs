@@ -22,3 +22,20 @@ fn an_error_under_capture_is_returned_not_a_panic() {
     assert!(error.is_none(), "{error:?}");
     assert_eq!(buffer.size(), 4);
 }
+
+/// A surface that keeps refusing its configuration doesn't spin a frame loop: the next try waits
+/// 16 ms, doubling with each refusal in a row up to 1 s, and every few refusals the surface is
+/// recreated (asked in review of #1966).
+#[test]
+fn refused_configures_back_off_and_recreate_the_surface() {
+    use egui_wgpu::{SURFACE_RECREATE_AFTER, configure_retry};
+    use std::time::Duration;
+    let delays: Vec<Duration> = (1..=12).map(|n| configure_retry(n).0).collect();
+    assert_eq!(delays.first(), Some(&Duration::from_millis(16)));
+    assert!(delays.windows(2).all(|w| w[0] <= w[1]), "{delays:?}");
+    assert_eq!(delays.last(), Some(&Duration::from_secs(1)), "capped at a second");
+    let recreate: Vec<u32> = (1..=12).filter(|n| configure_retry(*n).1).collect();
+    assert_eq!(recreate, vec![SURFACE_RECREATE_AFTER, 2 * SURFACE_RECREATE_AFTER, 3 * SURFACE_RECREATE_AFTER, 4 * SURFACE_RECREATE_AFTER]);
+    assert_eq!(configure_retry(0), (Duration::from_millis(16), false));
+    assert_eq!(configure_retry(u32::MAX).0, Duration::from_secs(1));
+}

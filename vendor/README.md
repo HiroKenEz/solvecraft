@@ -226,4 +226,6 @@ SolidCraft changes:
 - `src/lib.rs`, `src/winit.rs`: surfaces are configured under `capture_errors` (error scopes):
   a configuration the device refuses (D3D12 "Failed to wait for GPU to come idle before
   reconfiguring the Surface", #1935) is logged, the frame is skipped and the configure is tried
-  again on the next one, instead of the device's uncaptured-error handler panicking.
+  again, instead of the device's uncaptured-error handler panicking. A streak of refusals warns
+  once (debug after), waits 16 ms doubling up to 1 s between tries (`configure_retry`) and
+  recreates the surface every `SURFACE_RECREATE_AFTER` refusals; the streak survives a recreate.
