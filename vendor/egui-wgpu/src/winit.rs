@@ -102,11 +102,15 @@ impl Painter {
         self.render_state.clone()
     }
 
+    /// SolidCraft: whether the surface took the configuration. A configuration the device
+    /// refuses (D3D12: "Failed to wait for GPU to come idle before reconfiguring the Surface",
+    /// #1935) is logged instead of reaching the device's uncaptured-error handler, which panics:
+    /// the caller tries again on the next frame.
     fn configure_surface(
         surface_state: &SurfaceState,
         render_state: &RenderState,
         config: &SurfaceConfig,
-    ) {
+    ) -> bool {
         profiling::function_scope!();
 
         let SurfaceConfig {
@@ -132,7 +136,7 @@ impl Painter {
             .get_default_config(&render_state.adapter, width, height)
         else {
             log::error!("The surface isn't supported by this adapter");
-            return;
+            return true;
         };
         let mut surf_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -147,9 +151,17 @@ impl Painter {
             surf_config.desired_maximum_frame_latency = desired_maximum_frame_latency;
         }
 
-        surface_state
-            .surface
-            .configure(&render_state.device, &surf_config);
+        let device = &render_state.device;
+        let ((), failed) = crate::capture_errors(device, || surface_state.surface.configure(device, &surf_config));
+        match failed {
+            Some(error) => {
+                log::warn!(
+                    "The {width}x{height} surface could not be configured; trying again on the next frame: {error}"
+                );
+                false
+            }
+            None => true,
+        }
     }
 
     /// Drop the existing [`wgpu::Surface`] for `viewport_id` and create a fresh one for the
@@ -377,7 +389,10 @@ impl Painter {
         surface_state.requested = requested;
         surface_state.scale = scale;
 
-        Self::configure_surface(surface_state, render_state, &self.config.surface);
+        if !Self::configure_surface(surface_state, render_state, &self.config.surface) {
+            surface_state.needs_reconfigure = true;
+            self.context.request_repaint_of(viewport_id);
+        }
 
         if let Some(depth_format) = self.options.depth_stencil_format {
             self.depth_texture_view.insert(
@@ -477,7 +492,9 @@ impl Painter {
                         .lock()
                         .setPresentsWithTransaction(resizing);
 
-                    Self::configure_surface(state, render_state, &self.config.surface);
+                    if !Self::configure_surface(state, render_state, &self.config.surface) {
+                        state.needs_reconfigure = true;
+                    }
                 }
             }
         }
@@ -589,7 +606,12 @@ impl Painter {
         };
 
         if surface_state.needs_reconfigure {
-            Self::configure_surface(surface_state, render_state, &self.config.surface);
+            // SolidCraft: a surface still refusing its configuration skips this frame rather
+            // than acquire a texture from it (#1935).
+            if !Self::configure_surface(surface_state, render_state, &self.config.surface) {
+                self.context.request_repaint_of(viewport_id);
+                return vsync_sec;
+            }
             surface_state.needs_reconfigure = false;
         }
 
@@ -615,7 +637,9 @@ impl Painter {
             other => {
                 match (*self.config.on_surface_status)(&other) {
                     SurfaceErrorAction::Reconfigure => {
-                        Self::configure_surface(surface_state, render_state, &self.config.surface);
+                        if !Self::configure_surface(surface_state, render_state, &self.config.surface) {
+                            surface_state.needs_reconfigure = true;
+                        }
                         self.context.request_repaint_of(viewport_id);
                     }
                     SurfaceErrorAction::RecreateSurface => {
