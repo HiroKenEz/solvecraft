@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::i18n::{format as trf, tr_label};
+use crate::i18n::{format as trf, tr, tr_label};
 
 /// Steps of a batch named before "and N more".
 const MAX_STEPS: usize = 4;
@@ -61,14 +61,16 @@ fn tool_summary(tool: &str, a: Option<&Map<String, Value>>, result: Option<&Valu
         "batch" if nest => batch(a?.get("commands")?.as_array()?, done, u),
         "measure" => measure(s("body"), result, done, u),
         "save" => {
-            let file = s("path").or_else(|| result.and_then(|r| r.get("path")).and_then(Value::as_str)).map(file_name);
+            let file = s("path").or_else(|| result.and_then(|r| r.get("path")).and_then(Value::as_str)).and_then(file_name);
             match file {
                 Some(f) if done => Some(trf("ui.ai_tool_sum_saved", &[("file", &f)])),
                 f => Some(words([Some(label("file.save")?.to_string()), f])),
             }
         }
-        "export" => Some(words([Some(label("file.export")?.to_string()), s("path").map(file_name)])),
-        "open" => Some(words([Some(label("doc.open")?.to_string()), s("path").map(file_name)])),
+        "export" => Some(words([Some(label("file.export")?.to_string()), s("path").and_then(file_name)])),
+        "open" => Some(words([Some(label("doc.open")?.to_string()), s("path").and_then(file_name)])),
+        // The control channel's own calls: the picture is the point, never where it was left.
+        "ui.screenshot" | "ui_screenshot" | "screenshot" => Some(tr("ui.ai_tool_sum_screenshot").to_string()),
         "new_design" => Some(words([Some(label("file.new")?.to_string()), s("name").map(word)])),
         "set_parameter" => {
             let value = a.and_then(|a| a.get("value").or_else(|| a.get("expression"))).and_then(|v| length(v, u));
@@ -271,9 +273,75 @@ fn label(id: &str) -> Option<&'static str> {
     solidcraft_engine::find_command(id).map(|c| tr_label(c.label))
 }
 
-/// A file's name without its folders.
-fn file_name(path: &str) -> String {
-    word(path.rsplit(['/', '\\']).find(|p| !p.is_empty()).unwrap_or(path))
+/// A file's name without its folders; `None` for a temporary file (the agent's scratch, not
+/// something to name).
+fn file_name(path: &str) -> Option<String> {
+    if is_temp(path) {
+        return None;
+    }
+    Some(word(path.rsplit(['/', '\\']).find(|p| !p.is_empty()).unwrap_or(path)))
+}
+
+/// A path in a temporary folder (`/tmp`, `%TEMP%`, macOS `/var/folders`) or one of SolidCraft's
+/// own scratch folders.
+fn is_temp(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_ascii_lowercase();
+    ["/tmp/", "/temp/", "/var/folders/", "/appdata/local/temp", "solidcraft-mcp-", "/dev/shm/"].iter().any(|m| p.contains(m))
+        || p.ends_with("/tmp")
+        || p.ends_with("/temp")
+}
+
+/// Whether a word starts an absolute path: a Windows drive (`C:\`, `C:/`), a UNC share (`\\server`),
+/// `~` or a Unix path with a folder (`/home/x`, not a lone `/`).
+fn path_start(w: &str) -> bool {
+    let b = w.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+    let windows = drive || w.starts_with("\\\\");
+    windows || w == "~" || w.starts_with("~/") || (w.starts_with('/') && w[1..].contains(|c: char| c != '/'))
+}
+
+/// A card's title with every path cut to its file name and temporary files left out:
+/// "ui.screenshot: C:\\Users\\me\\Temp\\shot-0.png" reads "ui.screenshot", "Read /home/me/a.step"
+/// "Read a.step". The full title stays in the card's tooltip.
+pub fn plain_title(title: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut words = title.split_whitespace().peekable();
+    while let Some(first) = words.next() {
+        // Quotes and brackets around a path stay out of it.
+        let lead = first.len() - first.trim_start_matches(['"', '\'', '(', '[', '`']).len();
+        let core = &first[lead..];
+        if !path_start(core) {
+            out.push(first.to_string());
+            continue;
+        }
+        let mut path = core.to_string();
+        let windows = !core.starts_with('/') && !core.starts_with('~');
+        // A Windows folder may hold spaces ("Jane Doe"): carry on while the last part has no extension.
+        while windows && words.peek().is_some() {
+            let last = path.rsplit(['/', '\\']).next().unwrap_or("");
+            if last.contains('.') {
+                break;
+            }
+            path.push(' ');
+            path.push_str(words.next().unwrap_or_default());
+        }
+        let trail_at = path.trim_end_matches(['"', '\'', ')', ']', '`', ',', ';', '.', ':']).len();
+        let (body, trail) = path.split_at(trail_at);
+        let trail = trail.trim_start_matches(['"', '\'', ')', ']', '`']);
+        match file_name(body) {
+            Some(name) => out.push(format!("{}{name}{trail}", &first[..lead])),
+            None => {
+                if let Some(prev) = out.last_mut() {
+                    // The colon or "to" that led to the path leads nowhere now.
+                    if prev.ends_with(':') {
+                        prev.pop();
+                    }
+                }
+            }
+        }
+    }
+    let text = out.join(" ");
+    clip(&text, MAX_SUMMARY)
 }
 
 /// A name or expression from the call on one line, cut short.

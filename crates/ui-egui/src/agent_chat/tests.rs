@@ -2426,7 +2426,14 @@ fn no_tool_turn_warning_does_not_follow_a_tool_call() {
     let (mut app, _, _) = app_with_script();
     app.agent_chat.tools_port = Some(12345);
     start_turn(&mut app, "Make a box".into(), false, None, vec![]);
-    app.agent_chat.on_event(Event::Tool { id: "t".into(), title: Some("batch".into()), kind: None, status: Some(ToolStatus::Failed), input: None, output: None });
+    app.agent_chat.on_event(Event::Tool {
+        id: "t".into(),
+        title: Some("batch".into()),
+        kind: None,
+        status: Some(ToolStatus::Failed),
+        input: None,
+        output: None,
+    });
     app.agent_chat.on_event(Event::TurnEnded { reason: String::new() });
     end_turn(&mut app);
     assert!(status(&app).get("turnWarning").is_some());
@@ -2484,7 +2491,7 @@ fn tool_calls_read_as_what_they_did() {
     assert_eq!(said("measure", json!({"body": "Block"}), Some(measured)).as_deref(), Some("Measured Block: 40 × 30 × 20 mm, 23.6 cm³"));
     assert_eq!(said("save", json!({"path": "C:\\designs\\block.solidcraft"}), None).as_deref(), Some("Saved block.solidcraft"));
     // Still running, or failed: what it does, not what it did.
-    let running = summary::summary("save", Some(&json!({"path": "/tmp/block.solidcraft"})), None, false, in_mm());
+    let running = summary::summary("save", Some(&json!({"path": "/home/me/block.solidcraft"})), None, false, in_mm());
     assert_eq!(running.as_deref(), Some("Save block.solidcraft"));
     // Lengths in the design's units; an expression as written; one edge is one.
     let inches = summary::Units { units: "in", decimals: 3 };
@@ -2497,11 +2504,43 @@ fn tool_calls_read_as_what_they_did() {
     assert_eq!(said("batch: edit.undo", json!({"commands": steps}), None).as_deref(), Some("Undo, then Undo, then Undo, then Undo, and 2 more"));
 }
 
+/// Paths in a card never show their folders (the owner's "way too much"): the screenshot is just
+/// "Screenshot", files are their names, temporary files are not named, and the full text stays in
+/// Details and the tooltip.
+#[test]
+fn tool_cards_show_file_names_never_paths() {
+    let shot = r"ui.screenshot: C:\Users\bherbruck\AppData\Local\Temp\solidcraft-mcp-8608-b4c7b64\shot-0.png";
+    assert_eq!(said(shot, json!({}), None).as_deref(), Some("Screenshot"));
+    assert_eq!(said("mcp__solidcraft-app__ui.screenshot", json!({}), None).as_deref(), Some("Screenshot"));
+    // The fallback title (another agent's tools) is cut to file names; temp files drop out.
+    assert_eq!(summary::plain_title(shot), "ui.screenshot");
+    assert_eq!(summary::plain_title(r"Read C:\Users\Jane Doe\Documents\part.step"), "Read part.step");
+    assert_eq!(summary::plain_title(r"Write D:/work/out/block.solidcraft now"), "Write block.solidcraft now");
+    assert_eq!(summary::plain_title(r"Open \\nas\share\parts\bracket.step"), "Open bracket.step");
+    assert_eq!(summary::plain_title("Read /home/bherbruck/designs/part.step"), "Read part.step");
+    assert_eq!(summary::plain_title("Edit ~/designs/part.step."), "Edit part.step.");
+    assert_eq!(summary::plain_title("cat \"/home/me/a b.txt\" | head"), "cat \"a b.txt\" | head");
+    assert_eq!(summary::plain_title("Read /tmp/claude-1000/scratch/out.txt"), "Read");
+    assert_eq!(summary::plain_title("ui.render: /var/folders/xy/T/shot.png"), "ui.render");
+    assert_eq!(summary::plain_title("Run mcp__x__y with a/b and /"), "Run mcp__x__y with a/b and /");
+    // SolidCraft's own file tools: the name alone; a temp file has none.
+    assert_eq!(
+        said("export", json!({"path": "/home/me/cad/part.step"}), None).as_deref().map(|s| s.ends_with("part.step") && !s.contains('/')),
+        Some(true)
+    );
+    assert_eq!(
+        said("open", json!({"path": r"C:\cad\block.solidcraft"}), None).as_deref().map(|s| s.ends_with(" block.solidcraft") && !s.contains('\\')),
+        Some(true)
+    );
+    assert_eq!(said("save", json!({"path": "/tmp/x/block.solidcraft"}), None).as_deref(), Some("Save"));
+    assert_eq!(said("save", json!({"path": r"C:\Users\me\AppData\Local\Temp\a.solidcraft"}), Some("")).as_deref(), Some("Save"));
+}
+
 /// Another agent's own tools, an unknown command and malformed or hostile calls keep the card's
 /// title (no words), and nothing panics or grows without bound.
 #[test]
 fn unknown_or_malformed_tool_calls_keep_their_title_and_never_panic() {
-    for title in ["Read /etc/hosts", "mcp__github__create_issue", "mcp__github__save", "save /tmp/x.txt", "", "  ", "__", "mcp____", "screenshot"] {
+    for title in ["Read /etc/hosts", "mcp__github__create_issue", "mcp__github__save", "save /tmp/x.txt", "", "  ", "__", "mcp____"] {
         assert_eq!(said(title, json!({"path": "x.solidcraft", "command": "solid.box"}), None), None, "{title}");
     }
     assert_eq!(said("execute: solid.nope", json!({"command": "solid.nope"}), None), None, "an unknown command");
@@ -2583,4 +2622,30 @@ fn a_tool_card_shows_its_summary_and_keeps_the_json_behind_details() {
     h.frames(3);
     assert!(h.widget("Arguments").is_some() && h.widget(&pretty).is_some(), "the arguments unfold");
     assert!(h.widget("Result").is_some() && h.widget(output).is_some(), "and what it returned");
+}
+
+/// The card says "Screenshot"; the full temp path is only under Details.
+#[test]
+fn a_screenshot_card_hides_the_path_until_details() {
+    use crate::scenario::handle_at;
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    let path = r"C:\Users\bherbruck\AppData\Local\Temp\solidcraft-mcp-8608-b4c7b64\shot-0.png";
+    let n = h.app.agent_chat.items.len();
+    h.app.agent_chat.items.push(Item::Tool {
+        id: "s".into(),
+        title: format!("ui.screenshot: {path}"),
+        kind: String::new(),
+        status: Some(ToolStatus::Completed),
+        input: Some(json!({"path": path})),
+        output: Some(path.into()),
+    });
+    h.frames(3);
+    assert!(h.widget("Screenshot").is_some(), "the card says what it did");
+    assert!(h.widget(path).is_none() && h.widget(&format!("ui.screenshot: {path}")).is_none(), "no path in the card");
+    let card = handle_at(&format!("agent_chat:tool:{n}")).expect("the card");
+    h.call("ui.click", json!({"x": card.x, "y": card.y}));
+    h.frames(3);
+    assert!(h.widget("Result").is_some() && h.widget(path).is_some(), "Details holds the full path");
 }

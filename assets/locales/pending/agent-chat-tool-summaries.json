@@ -16,6 +16,7 @@
     "ui.ai_tool_sum_more": "{steps}, and {count} more",
     "ui.ai_tool_sum_radius": "r {value}",
     "ui.ai_tool_sum_saved": "Saved {file}",
+    "ui.ai_tool_sum_screenshot": "Screenshot",
     "ui.ai_tool_sum_then": "{first}, then {next}"
   },
   "ja": {
@@ -35,6 +36,7 @@
     "ui.ai_tool_sum_more": "{steps}、ほか {count} 件",
     "ui.ai_tool_sum_radius": "R {value}",
     "ui.ai_tool_sum_saved": "{file} を保存しました",
+    "ui.ai_tool_sum_screenshot": "スクリーンショット",
     "ui.ai_tool_sum_then": "{first}、続いて {next}"
   },
   "zh": {
@@ -54,6 +56,7 @@
     "ui.ai_tool_sum_more": "{steps}，另有 {count} 项",
     "ui.ai_tool_sum_radius": "R {value}",
     "ui.ai_tool_sum_saved": "已保存 {file}",
+    "ui.ai_tool_sum_screenshot": "截图",
     "ui.ai_tool_sum_then": "{first}，然后 {next}"
   }
 }

@@ -1860,7 +1860,7 @@ fn tool_card(ui: &mut egui::Ui, n: usize, call: &ToolCall) {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let text = match call.summary {
                         Some(words) => RichText::new(words).size(t.font_caption).color(t.text),
-                        None => RichText::new(call.title).monospace().size(t.font_caption).color(t.text),
+                        None => RichText::new(summary::plain_title(call.title)).monospace().size(t.font_caption).color(t.text),
                     };
                     ui.add(egui::Label::new(text).truncate().selectable(false)).on_hover_text(call.title);
                 });
