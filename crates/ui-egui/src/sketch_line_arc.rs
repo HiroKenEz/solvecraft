@@ -150,26 +150,32 @@ pub fn preview_arc(sketch: &Sketch, t: &Tool, hover: Vec2) -> Option<Sketch> {
     solidcraft_engine::cmd::tangent_arc_preview(sketch, t.chain.curve.as_deref()?, start, hover)
 }
 
-/// What the cursor says the next click makes (catalog id, icon, scenario count): while drawing
-/// tangent arcs, and just after switching back to lines.
-fn shown_mode(t: &Tool) -> Option<(&'static str, &'static str, f64)> {
+/// What the cursor says the next click makes (command, icon): while drawing tangent arcs, and just
+/// after switching back to lines.
+fn shown_mode(t: &Tool) -> Option<(&'static str, &'static str)> {
     if in_arc_mode(t) {
-        Some(("cmd.sketch.arc.tangent", "arc_tangent", 1.0))
+        Some((TANGENT_ARC, "arc_tangent"))
     } else if t.cmd == LINE && t.chain.back_to_lines {
-        Some(("cmd.sketch.line", "line", 2.0))
+        Some((LINE, "line"))
     } else {
         None
     }
 }
 
+/// The words next to the cursor, in the interface language.
+pub(crate) fn shown_label(t: &Tool) -> Option<&'static str> {
+    shown_mode(t).map(|(command, _)| crate::i18n::tr_label(crate::command_label(command)))
+}
+
 /// The label next to the cursor (below the point's coordinates).
 pub fn paint_mode(app: &SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &Proj) {
-    let Some((label, icon, count)) = app.tool.as_ref().and_then(shown_mode) else { return };
+    let Some((command, icon)) = app.tool.as_ref().and_then(shown_mode) else { return };
     let Some(pointer) = ui.input(|i| i.pointer.hover_pos()).filter(|p| proj.rect.contains(*p)) else { return };
     let tk = crate::theme::Tokens::view();
-    let galley = painter.layout_no_wrap(app.tr(label).to_string(), egui::FontId::proportional(tk.font_small), tk.text);
+    let Some(label) = app.tool.as_ref().and_then(shown_label) else { return };
+    let galley = painter.layout_no_wrap(label.to_string(), egui::FontId::proportional(tk.font_small), tk.text);
     let side = galley.size().y.max(14.0);
-    let at = pointer + egui::vec2(16.0, 28.0);
+    let at = pointer + egui::vec2(16.0, 40.0);
     let icon_rect = egui::Rect::from_min_size(at, egui::vec2(side, side));
     let text_at = at + egui::vec2(side + 4.0, (side - galley.size().y) * 0.5);
     let chip = egui::Rect::from_min_max(at, at + egui::vec2(side + 4.0 + galley.size().x, side)).expand(3.0);
@@ -177,5 +183,5 @@ pub fn paint_mode(app: &SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: 
     painter.rect_stroke(chip, tk.radius_sm, Stroke::new(1.0, tk.sketch_accent), egui::StrokeKind::Inside);
     crate::icons::paint_icon(painter, icon_rect, icon, 1.0);
     painter.galley(text_at, galley, tk.text);
-    crate::scenario::publish_count("line_arc_mode_chip", count);
+    crate::scenario::publish_count("line_arc_mode_chip", if command == TANGENT_ARC { 1.0 } else { 2.0 });
 }

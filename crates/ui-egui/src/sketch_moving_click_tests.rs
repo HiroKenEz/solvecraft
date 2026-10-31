@@ -257,6 +257,7 @@ fn a_rest_on_the_last_point_makes_the_next_click_a_tangent_arc_and_back_to_a_lin
     leave_and_rest(&mut h, [0.0, 0.0], REST);
     assert_eq!(tool(&h), Some("sketch.arc.tangent"), "{:?}", h.app.status);
     assert_eq!(crate::scenario::count_of("line_arc_mode_chip"), Some(1.0), "the cursor says Tangent Arc");
+    assert_eq!(h.app.tool.as_ref().and_then(crate::sketch_line_arc::shown_label), Some("Tangent Arc"), "in words, not a message id");
 
     // The line runs along +X into (0, 0): the tangent arc to (10, 10) has its centre on the
     // normal there, (0, 10), at radius 10, and leaves running along +X.
@@ -281,6 +282,7 @@ fn a_rest_on_the_last_point_makes_the_next_click_a_tangent_arc_and_back_to_a_lin
     leave_and_rest(&mut h, [10.0, 10.0], REST);
     assert_eq!(tool(&h), Some("sketch.line"), "{:?}", h.app.status);
     assert_eq!(crate::scenario::count_of("line_arc_mode_chip"), Some(2.0), "the cursor says Line");
+    assert_eq!(h.app.tool.as_ref().and_then(crate::sketch_line_arc::shown_label), Some("Line"));
     click_at(&mut h, [10.0, 30.0]);
     assert_eq!(curves(&h), 3, "{:?}", h.app.status);
     let sk = sketch(&h);
